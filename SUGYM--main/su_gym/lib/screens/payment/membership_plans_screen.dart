@@ -1,4 +1,5 @@
-// lib/screens/payment/membership_plans_screen.dart
+// Complete implementation for lib/screens/payment/membership_plans_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -13,21 +14,29 @@ class MembershipPlansScreen extends StatefulWidget {
 }
 
 class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
-  // Seçilen planın indeksi
+  // Selected plan index
   int _selectedPlanIndex = -1;
 
-  // Firestore'dan gelecek planlar
+  // Selected duration for purchase
+  Map<String, dynamic>? _selectedDuration;
+
+  // Firestore plans
   List<Map<String, dynamic>> _plans = [];
   bool _isLoading = true;
+  bool _isProcessingPayment = false;
   String _errorMessage = '';
+
+  // User membership data
+  Map<String, dynamic>? _currentMembership;
 
   @override
   void initState() {
     super.initState();
     _loadMembershipPlans();
+    _loadUserMembership();
   }
 
-  // Üyelik planlarını Firestore'dan yükle
+  // Load membership plans from Firestore
   Future<void> _loadMembershipPlans() async {
     setState(() {
       _isLoading = true;
@@ -37,7 +46,7 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
     try {
       final QuerySnapshot snapshot = await FirebaseFirestore.instance
           .collection('membership_plans')
-          .orderBy('price', descending: false) // Fiyata göre sırala
+          .orderBy('price', descending: false) // Sort by price
           .get();
 
       List<Map<String, dynamic>> plans = [];
@@ -45,7 +54,7 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
       for (var doc in snapshot.docs) {
         Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
 
-        // Firestore'dan gelen verileri düzenleme
+        // Process durations from Firestore
         List<Map<String, dynamic>> durations = [];
         if (data['durations'] != null && data['durations'] is List) {
           durations = List<Map<String, dynamic>>.from(
@@ -54,6 +63,7 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
           );
         }
 
+        // Process features from Firestore
         List<String> features = [];
         if (data['features'] != null && data['features'] is List) {
           features = List<String>.from(data['features']);
@@ -74,17 +84,41 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
         _isLoading = false;
       });
 
-      print('${_plans.length} üyelik planı yüklendi');
+      print('${_plans.length} membership plans loaded');
     } catch (e) {
-      print('Üyelik planları yüklenirken hata: $e');
+      print('Error loading membership plans: $e');
       setState(() {
-        _errorMessage = 'Üyelik planları yüklenirken bir hata oluştu: $e';
+        _errorMessage = 'Error loading membership plans: $e';
         _isLoading = false;
       });
     }
   }
 
-  // Plan için renk belirleme
+  // Load user's current membership
+  Future<void> _loadUserMembership() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+
+        if (doc.exists && doc.data()!.containsKey('membership')) {
+          setState(() {
+            _currentMembership =
+                doc.data()!['membership'] as Map<String, dynamic>;
+          });
+
+          print('Current membership: $_currentMembership');
+        }
+      }
+    } catch (e) {
+      print('Error loading user membership: $e');
+    }
+  }
+
+  // Determine plan color based on name
   Color _getPlanColor(String planName) {
     switch (planName.toLowerCase()) {
       case 'premium':
@@ -112,6 +146,16 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
           ),
         ),
         backgroundColor: Colors.blue,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              _loadMembershipPlans();
+              _loadUserMembership();
+            },
+            tooltip: 'Refresh',
+          ),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -123,7 +167,7 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
     );
   }
 
-  // Hata durumu gösterimi
+  // Error view
   Widget _buildErrorView() {
     return Center(
       child: Padding(
@@ -152,7 +196,7 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
     );
   }
 
-  // Boş liste durumu gösterimi
+  // Empty view when no plans are available
   Widget _buildEmptyView() {
     return Center(
       child: Padding(
@@ -183,35 +227,111 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
     );
   }
 
-  // Planlar listesi gösterimi
+  // Plans list view
   Widget _buildPlansListView() {
-    return SingleChildScrollView(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Choose your plan',
-              style: GoogleFonts.ubuntu(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Select the membership plan that works best for you.',
-              style: GoogleFonts.ubuntu(
-                fontSize: 16,
-                color: Colors.grey,
-              ),
-            ),
-            const SizedBox(height: 24),
+    return Stack(
+      children: [
+        // Show current membership status if available
+        if (_currentMembership != null &&
+            _currentMembership!['status'] == 'Active')
+          _buildCurrentMembershipBanner(),
 
-            // Üyelik planları listesi
-            ...List.generate(
-              _plans.length,
-              (index) => _buildPlanCard(context, _plans[index], index),
+        SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // If user has active membership, add some spacing
+                if (_currentMembership != null &&
+                    _currentMembership!['status'] == 'Active')
+                  const SizedBox(height: 60),
+
+                Text(
+                  'Choose your plan',
+                  style: GoogleFonts.ubuntu(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Select the membership plan that works best for you.',
+                  style: GoogleFonts.ubuntu(
+                    fontSize: 16,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Membership plans list
+                ...List.generate(
+                  _plans.length,
+                  (index) => _buildPlanCard(context, _plans[index], index),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // Loading indicator when processing payment
+        if (_isProcessingPayment)
+          Container(
+            color: Colors.black.withOpacity(0.5),
+            child: const Center(
+              child: Card(
+                child: Padding(
+                  padding: EdgeInsets.all(20.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 16),
+                      Text('Processing payment...'),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // Banner showing current membership status
+  Widget _buildCurrentMembershipBanner() {
+    final String planName = _currentMembership!['plan'] ?? 'Unknown';
+    final endDate = _currentMembership!['endDate'] != null
+        ? (_currentMembership!['endDate'] as Timestamp).toDate()
+        : DateTime.now();
+
+    final daysRemaining = endDate.difference(DateTime.now()).inDays;
+
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        color: Colors.green,
+        child: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'You have an active $planName membership',
+                style: GoogleFonts.ubuntu(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            Text(
+              '$daysRemaining days left',
+              style: GoogleFonts.ubuntu(
+                color: Colors.white,
+              ),
             ),
           ],
         ),
@@ -219,16 +339,23 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
     );
   }
 
-  // Plan kartı widget'ı
+  // Plan card widget
   Widget _buildPlanCard(
       BuildContext context, Map<String, dynamic> plan, int index) {
     final isSelected = _selectedPlanIndex == index;
     final Color planColor = plan['color'];
 
+    // Check if this is the user's current plan
+    final bool isCurrentPlan = _currentMembership != null &&
+        _currentMembership!['status'] == 'Active' &&
+        _currentMembership!['plan'] == plan['name'];
+
     return GestureDetector(
       onTap: () {
         setState(() {
           _selectedPlanIndex = index;
+          _selectedDuration =
+              null; // Reset selected duration when switching plans
         });
       },
       child: Container(
@@ -254,7 +381,7 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Plan başlığı
+            // Plan header
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 16),
@@ -267,6 +394,26 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
               ),
               child: Column(
                 children: [
+                  // Current plan label if applicable
+                  if (isCurrentPlan)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        'CURRENT PLAN',
+                        style: GoogleFonts.ubuntu(
+                          color: planColor,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+
                   Text(
                     plan['name'],
                     textAlign: TextAlign.center,
@@ -289,17 +436,95 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
               ),
             ),
 
-            // Plan detayları
+            // Plan details
             Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Süre ve fiyat seçenekleri
-                  ..._buildDurationOptions(plan['durations']),
-                  const SizedBox(height: 16),
+                  // Duration options
+                  Text(
+                    'Duration Options:',
+                    style: GoogleFonts.ubuntu(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
 
-                  // Özellikler başlığı
+                  ...plan['durations'].map<Widget>((duration) {
+                    final bool isSelectedDuration = _selectedPlanIndex ==
+                            index &&
+                        _selectedDuration != null &&
+                        _selectedDuration!['months'] == duration['months'] &&
+                        _selectedDuration!['price'] == duration['price'];
+
+                    return InkWell(
+                      onTap: () {
+                        if (_selectedPlanIndex == index) {
+                          setState(() {
+                            _selectedDuration = duration;
+                          });
+                        } else {
+                          setState(() {
+                            _selectedPlanIndex = index;
+                            _selectedDuration = duration;
+                          });
+                        }
+                      },
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: isSelectedDuration
+                                ? planColor
+                                : Colors.grey.shade300,
+                            width: isSelectedDuration ? 2 : 1,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                          color: isSelectedDuration
+                              ? planColor.withOpacity(0.1)
+                              : Colors.white,
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${duration['months']} ${duration['months'] == 1 ? 'Month' : 'Months'}',
+                                  style: GoogleFonts.ubuntu(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                if (duration['months'] > 1)
+                                  Text(
+                                    'Save ${_calculateDiscount(plan, duration)}%',
+                                    style: GoogleFonts.ubuntu(
+                                      color: Colors.green,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            Text(
+                              '${duration['price']} TL',
+                              style: GoogleFonts.ubuntu(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+
+                  const SizedBox(height: 20),
+
+                  // Features title
                   Text(
                     'Features:',
                     style: GoogleFonts.ubuntu(
@@ -309,7 +534,7 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // Özellikler listesi
+                  // Features list
                   ...plan['features'].map<Widget>((feature) {
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 8),
@@ -335,7 +560,7 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
 
                   const SizedBox(height: 20),
 
-                  // Satın al düğmesi
+                  // Buy button
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
@@ -347,9 +572,20 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
-                      onPressed: () => _showPaymentDialog(context, plan),
+                      onPressed: isSelected && _selectedDuration != null
+                          ? () => _showPaymentDialog(context, plan)
+                          : () {
+                              setState(() {
+                                _selectedPlanIndex = index;
+                                // Auto-select first duration if none is selected
+                                if (_selectedDuration == null &&
+                                    plan['durations'].isNotEmpty) {
+                                  _selectedDuration = plan['durations'][0];
+                                }
+                              });
+                            },
                       child: Text(
-                        'Buy',
+                        isCurrentPlan ? 'Renew Plan' : 'Buy',
                         style: GoogleFonts.ubuntu(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -366,43 +602,122 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
     );
   }
 
-  // Süre ve fiyat seçenekleri
-  List<Widget> _buildDurationOptions(List<dynamic> durations) {
-    return durations.map<Widget>((duration) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              'Duration: ${duration['months']} ${duration['months'] == 1 ? 'Month' : 'Months'}',
-              style: GoogleFonts.ubuntu(fontSize: 16),
-            ),
-            Text(
-              'Price: ${duration['price']} TL',
-              style: GoogleFonts.ubuntu(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      );
-    }).toList();
+  // Calculate discount percentage for longer durations
+  int _calculateDiscount(
+      Map<String, dynamic> plan, Map<String, dynamic> duration) {
+    if (plan['durations'].isEmpty || duration['months'] <= 1) return 0;
+
+    // Get the monthly price from the 1-month option
+    final oneMonthOption = plan['durations'].firstWhere((d) => d['months'] == 1,
+        orElse: () => {'price': duration['price'], 'months': 1});
+
+    final oneMonthPrice = oneMonthOption['price'] as num;
+    final currentPrice = duration['price'] as num;
+    final currentMonths = duration['months'] as num;
+
+    // Calculate the total equivalent price if paying monthly
+    final equivalentMonthlyTotal = oneMonthPrice * currentMonths;
+
+    // Calculate the discount
+    final savings = equivalentMonthlyTotal - currentPrice;
+    final discountPercentage = (savings / equivalentMonthlyTotal) * 100;
+
+    return discountPercentage.round();
   }
 
-  // Ödeme onay iletişim kutusu
+  // Payment dialog
   void _showPaymentDialog(BuildContext context, Map<String, dynamic> plan) {
+    if (_selectedDuration == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a duration option'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(
-          'Purchase ${plan['name']} Plan?',
+          'Purchase ${plan['name']} Plan',
           style: GoogleFonts.ubuntu(fontWeight: FontWeight.bold),
         ),
-        content: Text(
-          'You will be directed to payment. Continue?',
-          style: GoogleFonts.ubuntu(),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'You are about to purchase:',
+              style: GoogleFonts.ubuntu(),
+            ),
+            const SizedBox(height: 16),
+
+            // Plan details
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Plan:',
+                        style: GoogleFonts.ubuntu(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        plan['name'],
+                        style: GoogleFonts.ubuntu(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Duration:',
+                        style: GoogleFonts.ubuntu(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        '${_selectedDuration!['months']} ${_selectedDuration!['months'] == 1 ? 'Month' : 'Months'}',
+                        style: GoogleFonts.ubuntu(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Price:',
+                        style: GoogleFonts.ubuntu(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        '${_selectedDuration!['price']} TL',
+                        style: GoogleFonts.ubuntu(fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+            Text(
+              'Note: This is a demo app. No actual payment will be processed.',
+              style: GoogleFonts.ubuntu(
+                fontStyle: FontStyle.italic,
+                fontSize: 12,
+                color: Colors.grey,
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -418,12 +733,11 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
               foregroundColor: Colors.white,
             ),
             onPressed: () {
-              // Ödeme işlemi ve üyeliği güncelleme
-              _processMembershipPurchase(plan);
               Navigator.pop(context);
+              _processMembershipPurchase(plan);
             },
             child: Text(
-              'Proceed',
+              'Proceed to Payment',
               style: GoogleFonts.ubuntu(),
             ),
           ),
@@ -432,25 +746,61 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
     );
   }
 
-  // Üyelik satın alma işlemi
+  // Purchase processing
   Future<void> _processMembershipPurchase(Map<String, dynamic> plan) async {
+    if (_selectedDuration == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a duration option'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isProcessingPayment = true;
+    });
+
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) {
         throw Exception('You must be logged in to purchase a membership');
       }
 
-      // Örnek olarak ilk süre seçeneğini kullanıyoruz, gerçek bir uygulamada
-      // kullanıcının seçtiği süre seçeneğini kullanmanız gerekir
-      final firstDuration = plan['durations'][0];
-      final months = firstDuration['months'] as int;
+      // Get selected duration details
+      final months = _selectedDuration!['months'] as int;
+      final price = _selectedDuration!['price'];
 
-      // Başlangıç ve bitiş tarihlerini hesapla
+      // Show payment details screen
+      final didCompletePayment =
+          await _showPaymentDetailsScreen(plan, _selectedDuration!);
+
+      if (!didCompletePayment) {
+        setState(() {
+          _isProcessingPayment = false;
+        });
+        return;
+      }
+
+      // Calculate membership dates
       final now = DateTime.now();
-      final startDate = now;
-      final endDate = now.add(Duration(days: 30 * months));
+      DateTime startDate = now;
 
-      // Kullanıcının üyelik bilgilerini güncelle
+      // If extending current membership, start from end date
+      if (_currentMembership != null &&
+          _currentMembership!['status'] == 'Active' &&
+          _currentMembership!['endDate'] != null) {
+        final currentEndDate =
+            (_currentMembership!['endDate'] as Timestamp).toDate();
+        if (currentEndDate.isAfter(now)) {
+          startDate = currentEndDate;
+        }
+      }
+
+      final endDate = startDate.add(Duration(days: 30 * months));
+
+      // Update user's membership in Firestore
       await FirebaseFirestore.instance
           .collection('users')
           .doc(user.uid)
@@ -462,20 +812,22 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
         'membership.status': 'Active',
       });
 
-      // Ödeme kaydı oluştur
+      // Create payment record
       await FirebaseFirestore.instance.collection('payments').add({
         'userId': user.uid,
         'planId': plan['id'],
         'planName': plan['name'],
-        'amount': firstDuration['price'],
+        'amount': price,
         'duration': months,
         'startDate': startDate,
         'endDate': endDate,
         'status': 'Completed',
+        'paymentMethod':
+            'Credit Card', // In a real app, this would come from payment processing
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // Başarı mesajı
+      // Show success message
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('${plan['name']} plan purchased successfully!'),
@@ -484,18 +836,352 @@ class _MembershipPlansScreenState extends State<MembershipPlansScreen> {
         ),
       );
 
-      // İsteğe bağlı: Profil sayfasına dön
+      // Reload user membership
+      await _loadUserMembership();
+
+      // Navigate to profile page after short delay
       Future.delayed(const Duration(milliseconds: 500), () {
         Navigator.pushReplacementNamed(context, '/profile');
       });
     } catch (e) {
-      print('Üyelik satın alma sırasında hata: $e');
+      print('Error purchasing membership: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error: $e'),
           backgroundColor: Colors.red,
         ),
       );
+    } finally {
+      setState(() {
+        _isProcessingPayment = false;
+      });
     }
+  }
+
+  // Show payment details screen
+  Future<bool> _showPaymentDetailsScreen(
+      Map<String, dynamic> plan, Map<String, dynamic> duration) async {
+    bool paymentCompleted = false;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(builder: (context, setState) {
+          return Container(
+            padding: const EdgeInsets.all(20),
+            height: MediaQuery.of(context).size.height * 0.8,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Payment Details',
+                      style: GoogleFonts.ubuntu(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+
+                // Order summary
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Order Summary',
+                        style: GoogleFonts.ubuntu(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            '${plan['name']} (${duration['months']} ${duration['months'] == 1 ? 'Month' : 'Months'})',
+                            style: GoogleFonts.ubuntu(),
+                          ),
+                          Text(
+                            '${duration['price']} TL',
+                            style:
+                                GoogleFonts.ubuntu(fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                      const Divider(height: 24),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Total',
+                            style:
+                                GoogleFonts.ubuntu(fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            '${duration['price']} TL',
+                            style: GoogleFonts.ubuntu(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // Payment method selection
+                Text(
+                  'Payment Method',
+                  style: GoogleFonts.ubuntu(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // Credit card payment
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.blue),
+                    borderRadius: BorderRadius.circular(12),
+                    color: Colors.blue.withOpacity(0.05),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.credit_card, color: Colors.blue),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Credit/Debit Card',
+                            style: GoogleFonts.ubuntu(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          const Icon(Icons.check_circle, color: Colors.blue),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Card number
+                      TextFormField(
+                        decoration: const InputDecoration(
+                          labelText: 'Card Number',
+                          hintText: '1234 5678 9012 3456',
+                          border: OutlineInputBorder(),
+                        ),
+                        initialValue: '4111 1111 1111 1111', // Demo card number
+                        keyboardType: TextInputType.number,
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Expiry date and CVV
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              decoration: const InputDecoration(
+                                labelText: 'Expiry Date',
+                                hintText: 'MM/YY',
+                                border: OutlineInputBorder(),
+                              ),
+                              initialValue: '12/25',
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: TextFormField(
+                              decoration: const InputDecoration(
+                                labelText: 'CVV',
+                                hintText: '123',
+                                border: OutlineInputBorder(),
+                              ),
+                              initialValue: '123',
+                              obscureText: true,
+                              keyboardType: TextInputType.number,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Cardholder name
+                      TextFormField(
+                        decoration: const InputDecoration(
+                          labelText: 'Cardholder Name',
+                          hintText: 'John Doe',
+                          border: OutlineInputBorder(),
+                        ),
+                        initialValue: 'John Doe',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // Other payment methods (disabled in demo)
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(12),
+                    color: Colors.grey.shade100,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.account_balance, color: Colors.grey),
+                      const SizedBox(width: 12),
+                      Text(
+                        'Bank Transfer',
+                        style: GoogleFonts.ubuntu(
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Coming Soon',
+                          style: GoogleFonts.ubuntu(
+                            fontSize: 12,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // PayPal option (disabled in demo)
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(12),
+                    color: Colors.grey.shade100,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.payment, color: Colors.grey),
+                      const SizedBox(width: 12),
+                      Text(
+                        'PayPal',
+                        style: GoogleFonts.ubuntu(
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Coming Soon',
+                          style: GoogleFonts.ubuntu(
+                            fontSize: 12,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const Spacer(),
+
+                // Payment button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: plan['color'],
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: () {
+                      // Simulate payment processing
+                      setState(() {
+                        // Local state within bottom sheet
+                        paymentCompleted = true;
+                      });
+
+                      // Show loading
+                      showDialog(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (context) => const Dialog(
+                          child: Padding(
+                            padding: EdgeInsets.all(20),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CircularProgressIndicator(),
+                                SizedBox(height: 16),
+                                Text('Processing payment...'),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+
+                      // Simulate processing delay
+                      Future.delayed(const Duration(seconds: 2), () {
+                        Navigator.pop(context); // Close loading dialog
+                        Navigator.pop(context); // Close payment sheet
+                      });
+                    },
+                    child: Text(
+                      'Pay ${duration['price']} TL',
+                      style: GoogleFonts.ubuntu(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        });
+      },
+    );
+
+    return paymentCompleted;
   }
 }
